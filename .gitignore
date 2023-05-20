@@ -1,0 +1,7 @@
+/.idea
+
+/crawl/data
+
+/crawl/__pycache__
+
+/crawl/fund_codes.txt
