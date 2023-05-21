@@ -8,7 +8,8 @@
 @date: 2023/5/20 15:38
 """
 import time
-from typing import List
+import re
+from typing import List, NoReturn
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 from selenium import webdriver
@@ -104,9 +105,9 @@ def get_random_user_agent():
 
 
 def execute_single_fund(fund_code: str = None):
+    url = f"http://fundf10.eastmoney.com/jjjz_{fund_code}.html"
+    driver = get_driver(user_agent=get_random_user_agent())
     try:
-        url = f"http://fundf10.eastmoney.com/jjjz_{fund_code}.html"
-        driver = get_driver(user_agent=get_random_user_agent())
         file = open(f"./data/fund_net_price_{fund_code}.txt", 'w', encoding='utf-8')
 
         max_retries = 3
@@ -128,6 +129,7 @@ def execute_single_fund(fund_code: str = None):
             retry_count += 1
         if retry_count == 3:
             print(f'Crawl {fund_code} failed.')
+            return
 
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         pagebtns = soup.find('div', attrs={'class': 'pagebtns'})
@@ -166,4 +168,78 @@ def execute_single_fund(fund_code: str = None):
     except Exception as e:
         print(f'At last crawl {fund_code} failed.', e)
 
+    driver.close()
 
+
+def execute_single_fund_position(fund_code: str = None) -> NoReturn:
+    url = f'http://fundf10.eastmoney.com/ccmx_{fund_code}.html'
+    driver = get_driver(user_agent=get_random_user_agent())
+    try:
+        file = open(f"./data/fund_stock_position_{fund_code}.txt", 'w', encoding='utf-8')
+
+        # 等待table出现
+        max_retries = 3
+        retry_count = 0
+        table = None
+        while retry_count < max_retries:
+            driver.get(url)  # 加载网页
+            time.sleep(0.25)
+
+            # 等待页面返回
+            try:
+                table = WebDriverWait(driver, 2).until(
+                    EC.visibility_of_element_located((By.XPATH, '//table[contains(@class, "w782 comm tzxq")]'))
+                )
+                break
+            except:
+                # print(f"{fund_code} page's table not found {retry_count + 1} times")
+                driver = get_driver(user_agent=get_random_user_agent())
+
+            # 增加重试次数
+            retry_count += 1
+        if retry_count == 3 and not table:
+            print(f'{fund_code} page has no table. ')
+            return
+
+        # 是否有年份页面选择
+        year_button = None
+        try:
+            year_button = driver.find_element(By.XPATH, '//div[@class="pagebtns"]')
+        except:
+            pass
+
+        if year_button:
+            max_year = year_button.text[:4]
+            max_year_button = driver.find_element(By.XPATH, f'//div[@class="pagebtns"]/label[@value={max_year}]')
+            max_year_button.click()
+
+            table = WebDriverWait(driver, 2).until(
+                EC.visibility_of_element_located((By.XPATH, '//table[contains(@class, "w782 comm tzxq")]'))
+            )
+
+        # expand_button
+        expand_button = driver.find_element(By.XPATH, '//a[@style="cursor:pointer;"]')
+
+        if "显示全部持仓明细" in expand_button.text:
+            expand_button.click()
+
+            table = WebDriverWait(driver, 2).until(
+                EC.visibility_of_element_located((By.XPATH, '//table[contains(@class, "w782 comm tzxq")]'))
+            )
+
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        table_pattern = re.compile(r"w782\scomm\stzxq.*")
+        table = soup.find('table', attrs={'class': table_pattern})
+        for row in table.find_all('tr'):
+            row_data = []
+            for td in row.find_all('td'):
+                row_data.append(td.text.strip())
+            if row_data:
+                row_data = '\t'.join(row_data)
+                file.write(row_data + '\n')
+
+        file.close()
+    except Exception as e:
+        print(f"Crawl {fund_code} failed. Reason: ", e)
+
+    driver.close()
